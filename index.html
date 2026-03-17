@@ -3549,25 +3549,24 @@ function handleDynTranscriptUpload(event) {
 
 function buildAgendaFromDynTab() {
   // Check paste box first, then uploaded file, then saved history
-  const pasteText = (document.getElementById('dynTranscriptPaste') || {}).value;
-  const pasteLabel = (document.getElementById('dynTranscriptLabel') || {}).value;
+  var pasteText = (document.getElementById('dynTranscriptPaste') || {}).value;
+  var pasteLabel = (document.getElementById('dynTranscriptLabel') || {}).value;
 
-  let text = (pasteText && pasteText.trim()) ? pasteText.trim() : dynTranscriptText;
-  let label = (pasteLabel && pasteLabel.trim()) ? pasteLabel.trim() :
+  var text = (pasteText && pasteText.trim()) ? pasteText.trim() : dynTranscriptText;
+  var label = (pasteLabel && pasteLabel.trim()) ? pasteLabel.trim() :
               dynTranscriptLabelVal ||
               ('Meeting \u2014 ' + new Date().toLocaleDateString());
 
   if (!text) {
-    // Try saved history
-    const history = JSON.parse(localStorage.getItem('transcriptHistory') || '[]');
+    var history = JSON.parse(localStorage.getItem('transcriptHistory') || '[]');
     if (history.length > 0) {
       text = history[0].rawText || null;
       label = history[0].label;
-      // If no raw text saved, use the already-extracted result directly
       if (!text) {
         currentTranscriptData = history[0];
-        renderTranscriptResults(history[0]);
-        pushToNextAgenda();
+        // Still gather other data sources
+        var ctx = gatherAllDataSources(history[0]);
+        renderAgendaFromTranscript(ctx);
         return;
       }
     }
@@ -3578,40 +3577,233 @@ function buildAgendaFromDynTab() {
     return;
   }
 
-  // Process and build agenda
-  const statusEl = document.getElementById('dynTranscriptStatus');
-  if (statusEl) { statusEl.textContent = '\u23f3 Analyzing transcript...'; statusEl.style.color = 'rgba(255,255,255,0.6)'; }
+  var statusEl = document.getElementById('dynTranscriptStatus');
+  if (statusEl) { statusEl.textContent = '\u23f3 Analyzing all data sources...'; statusEl.style.color = 'rgba(255,255,255,0.6)'; }
 
-  setTimeout(() => {
-    const result = extractFromTranscript(text, label);
-    // Save raw text for future use
-    result.rawText = text.slice(0, 50000); // cap at 50k chars to avoid storage limits
+  setTimeout(function() {
+    var result = extractFromTranscript(text, label);
+    result.rawText = text.slice(0, 50000);
     currentTranscriptData = result;
-    const history = JSON.parse(localStorage.getItem('transcriptHistory') || '[]');
-    history.unshift(result);
-    localStorage.setItem('transcriptHistory', JSON.stringify(history.slice(0, 20)));
+    var hist = JSON.parse(localStorage.getItem('transcriptHistory') || '[]');
+    hist.unshift(result);
+    localStorage.setItem('transcriptHistory', JSON.stringify(hist.slice(0, 20)));
+
+    // Gather all data sources
+    var ctx = gatherAllDataSources(result);
+
+    var sourceList = ['transcript'];
+    if (ctx.capacity) sourceList.push('Book 20');
+    if (ctx.jiq) sourceList.push('JIQ');
+    if (ctx.scorecard) sourceList.push('Scorecard');
 
     if (statusEl) {
-      statusEl.textContent = '\u2705 Agenda built from: ' + result.label + ' \u2014 ' + result.commitments.length + ' commitments, ' + result.metrics.filter(function(m){return m.status==='At Risk';}).length + ' at-risk metrics.';
+      statusEl.textContent = '\u2705 Agenda built from: ' + sourceList.join(' + ') + ' \u2014 ' + result.commitments.length + ' commitments, ' + ctx.allFlags.length + ' priority flags.';
       statusEl.style.color = '#86efac';
     }
 
-    // Push to agenda and render
-    localStorage.setItem('nextAgendaData', JSON.stringify({
-      source: result.label,
-      commitments: result.commitments,
-      atRiskMetrics: result.metrics.filter(function(m){ return m.status === 'At Risk'; }),
-      barriers: result.barriers,
-      wins: result.wins,
-      pushedAt: new Date().toISOString()
-    }));
-
-    // Render agenda directly from transcript data
-    renderAgendaFromTranscript(result);
+    renderAgendaFromTranscript(ctx);
   }, 600);
 }
 
-function renderAgendaFromTranscript(data) {
+function gatherAllDataSources(transcriptResult) {
+  // Load all available data from localStorage
+  var capData = null;
+  var jiqLatest = null;
+  var scLatest = null;
+
+  try { capData = JSON.parse(localStorage.getItem('linkus_capacity') || 'null'); } catch(e) {}
+  try {
+    var jiqArr = JSON.parse(localStorage.getItem('jiqData') || '[]');
+    if (jiqArr.length) jiqLatest = jiqArr.sort(function(a,b){ return b.week.localeCompare(a.week); })[0];
+  } catch(e) {}
+  try {
+    var scArr = JSON.parse(localStorage.getItem('scorecardData') || '[]');
+    if (scArr.length) scLatest = scArr.sort(function(a,b){ return b.week.localeCompare(a.week); })[0];
+  } catch(e) {}
+
+  // Build unified priority flags
+  var allFlags = [];
+
+  // --- Capacity flags from Book 20 ---
+  var capFlags = [];
+  if (capData && capData.totals) {
+    var t = capData.totals;
+    if (t.dishGap < 0) {
+      var severity = t.dishGap <= -5 ? 'critical' : 'warning';
+      capFlags.push({
+        source: 'Book 20',
+        severity: severity,
+        icon: severity === 'critical' ? '\ud83d\udea8' : '\u26a0',
+        color: severity === 'critical' ? 'var(--red)' : 'var(--yellow)',
+        title: 'Capacity Gap: DISH RPM Shortfall',
+        detail: 'DISH gap is ' + t.dishGap + ' (' + t.routable + ' routable vs ' + t.dishRPM + ' target). ' +
+          (t.totalPipeline > 0 ? t.totalPipeline + ' in pipeline. ' : '') +
+          (t.onboard > 0 ? t.onboard + ' onboarding. ' : '') +
+          'Capacity constraint is directly driving JIQ growth and missed installs.',
+        action: 'Barrier Buster: Identify which offices have the largest gap and what is blocking routable conversion.'
+      });
+    }
+    // Check for offices with critical gaps
+    if (capData.offices) {
+      var critOffices = capData.offices.filter(function(o){ return (o.dishGap || 0) <= -3; });
+      if (critOffices.length > 0) {
+        capFlags.push({
+          source: 'Book 20',
+          severity: 'warning',
+          icon: '\ud83d\udcc9',
+          color: 'var(--yellow)',
+          title: critOffices.length + ' Office' + (critOffices.length > 1 ? 's' : '') + ' with Critical Capacity Gaps',
+          detail: critOffices.slice(0,4).map(function(o){ return o.office + ' (gap: ' + (o.dishGap || 0) + ')'; }).join(', ') + (critOffices.length > 4 ? ' + ' + (critOffices.length - 4) + ' more' : ''),
+          action: '45-Second Drill: Each GM states their routable conversion plan for this week.'
+        });
+      }
+    }
+  }
+
+  // --- JIQ flags ---
+  var jiqFlags = [];
+  if (jiqLatest) {
+    var j = jiqLatest;
+    if (j.quotaPct < 90) {
+      jiqFlags.push({
+        source: 'JIQ',
+        severity: j.quotaPct < 75 ? 'critical' : 'warning',
+        icon: j.quotaPct < 75 ? '\ud83d\udea8' : '\u26a0',
+        color: j.quotaPct < 75 ? 'var(--red)' : 'var(--yellow)',
+        title: 'Quota Consumption at ' + j.quotaPct.toFixed(1) + '% \u2014 Below 90% Target',
+        detail: 'Week of ' + j.week + ': SOD Fielded ' + j.sod.toLocaleString() + ', Yesterday Booking ' + j.booking.toLocaleString() + ', Grand Total JIQ ' + j.grandTotal.toLocaleString() + '.',
+        action: 'Scoreboard Pulse: Review booking pace. Identify which offices are dragging quota consumption.'
+      });
+    }
+    if (j.grandTotal > 500) {
+      jiqFlags.push({
+        source: 'JIQ',
+        severity: j.grandTotal > 1000 ? 'critical' : 'warning',
+        icon: '\ud83d\udce6',
+        color: j.grandTotal > 1000 ? 'var(--red)' : 'var(--yellow)',
+        title: 'Growing JIQ: ' + j.grandTotal.toLocaleString() + ' Jobs in Queue',
+        detail: 'JIQ is elevated at ' + j.grandTotal.toLocaleString() + ' total jobs. ' +
+          (j.tc > 20 ? 'TC share ' + j.tc.toFixed(1) + '% is high. ' : '') +
+          (j.starlink > 0 ? 'Starlink share ' + j.starlink.toFixed(1) + '%. ' : '') +
+          (capData && capData.totals && capData.totals.dishGap < 0 ? 'Capacity gap of ' + capData.totals.dishGap + ' is directly contributing to JIQ growth.' : ''),
+        action: 'Barrier Buster: Diagnose whether JIQ growth is driven by capacity, scheduling, or tech availability.'
+      });
+    }
+    // Regional flags
+    if (j.regions) {
+      var highJIQRegions = j.regions.filter(function(r){ return r.total > 100; });
+      if (highJIQRegions.length > 0) {
+        jiqFlags.push({
+          source: 'JIQ',
+          severity: 'warning',
+          icon: '\ud83d\udccd',
+          color: 'var(--yellow)',
+          title: 'High JIQ Regions: ' + highJIQRegions.map(function(r){ return r.car; }).join(', '),
+          detail: highJIQRegions.map(function(r){ return r.car + ': ' + r.total + ' total (' + r.dish + ' DISH)'; }).join(' | '),
+          action: '45-Second Drill: Each regional GM states their JIQ reduction plan.'
+        });
+      }
+    }
+  }
+
+  // --- Scorecard KPI flags ---
+  var scFlags = [];
+  if (scLatest && scLatest.offices && scLatest.offices.length) {
+    var goals = scLatest.goals || {};
+    var parseVal = function(v) { return parseFloat(String(v || '').replace(/[%$,]/g,'')) || null; };
+    var goalVal = function(g) { return parseFloat(String(g || '').replace(/[%$,]/g,'')) || null; };
+
+    var kpiDefs = [
+      { key: 'ac10', label: 'AC10', goalKey: 'ac10', higherBetter: true, unit: '%' },
+      { key: 'allDCR', label: 'All DCR', goalKey: 'allDCR', higherBetter: true, unit: '%' },
+      { key: 'allNPS', label: 'NPS', goalKey: 'allNPS', higherBetter: true, unit: '' },
+      { key: 'swo', label: '$/WO (SHS)', goalKey: 'swo', higherBetter: true, unit: '$' },
+      { key: 'arcflip', label: 'ArcFlip', goalKey: 'arcflip', higherBetter: true, unit: '%' },
+      { key: 'daysBooked', label: 'Days Booked', goalKey: 'daysBooked', higherBetter: true, unit: '' }
+    ];
+
+    kpiDefs.forEach(function(kpi) {
+      var vals = scLatest.offices.map(function(o){ return parseVal(o[kpi.key]); }).filter(function(v){ return v !== null; });
+      if (!vals.length) return;
+      var avg = vals.reduce(function(a,b){ return a+b; }, 0) / vals.length;
+      var goal = goalVal(goals[kpi.goalKey]);
+      var belowGoal = scLatest.offices.filter(function(o){
+        var v = parseVal(o[kpi.key]);
+        if (v === null || goal === null) return false;
+        return kpi.higherBetter ? v < goal * 0.97 : v > goal * 1.03;
+      });
+      if (goal !== null && belowGoal.length > 0) {
+        var pct = ((avg / goal) * 100).toFixed(1);
+        scFlags.push({
+          source: 'Scorecard',
+          severity: belowGoal.length >= scLatest.offices.length * 0.5 ? 'critical' : 'warning',
+          icon: belowGoal.length >= scLatest.offices.length * 0.5 ? '\ud83d\udea8' : '\u26a0',
+          color: belowGoal.length >= scLatest.offices.length * 0.5 ? 'var(--red)' : 'var(--yellow)',
+          title: kpi.label + ' Below Goal: ' + belowGoal.length + ' of ' + scLatest.offices.length + ' offices',
+          detail: 'Region avg: ' + (kpi.unit === '$' ? '$' : '') + avg.toFixed(2) + (kpi.unit === '%' ? '%' : '') + ' vs goal ' + (kpi.unit === '$' ? '$' : '') + goal + (kpi.unit === '%' ? '%' : '') + ' (' + pct + '% of goal). Offices below: ' + belowGoal.slice(0,4).map(function(o){ return o.office; }).join(', ') + (belowGoal.length > 4 ? ' +' + (belowGoal.length-4) + ' more' : '') + '.',
+          action: '45-Second Drill: Each underperforming office states root cause and this-week action.'
+        });
+      }
+    });
+  }
+
+  // --- Transcript flags ---
+  var transcriptFlags = [];
+  if (transcriptResult) {
+    transcriptResult.metrics.filter(function(m){ return m.status === 'At Risk'; }).forEach(function(m) {
+      transcriptFlags.push({
+        source: 'Transcript',
+        severity: 'warning',
+        icon: '\ud83c\udfa4',
+        color: 'var(--blue-accent)',
+        title: m.metric + ' \u2014 Flagged At Risk in Last Meeting',
+        detail: 'Mentioned as at-risk in ' + (transcriptResult.label || 'last meeting') + '. Value referenced: ' + m.value + '.',
+        action: 'Scoreboard Pulse: Confirm current status and assign recovery action if still below target.'
+      });
+    });
+    transcriptResult.barriers.slice(0,3).forEach(function(b) {
+      transcriptFlags.push({
+        source: 'Transcript',
+        severity: 'warning',
+        icon: '\ud83d\udea7',
+        color: 'var(--blue-accent)',
+        title: 'Unresolved Barrier from Last Meeting',
+        detail: b,
+        action: 'Barrier Buster: Confirm if this barrier has been resolved or escalate with DROOM.'
+      });
+    });
+  }
+
+  // Sort: critical first, then by source priority (Scorecard > Book20 > JIQ > Transcript)
+  var sourcePriority = { 'Scorecard': 1, 'Book 20': 2, 'JIQ': 3, 'Transcript': 4 };
+  allFlags = scFlags.concat(capFlags).concat(jiqFlags).concat(transcriptFlags);
+  allFlags.sort(function(a, b) {
+    if (a.severity === 'critical' && b.severity !== 'critical') return -1;
+    if (b.severity === 'critical' && a.severity !== 'critical') return 1;
+    return (sourcePriority[a.source] || 5) - (sourcePriority[b.source] || 5);
+  });
+
+  return {
+    transcript: transcriptResult,
+    capacity: capData,
+    jiq: jiqLatest,
+    scorecard: scLatest,
+    allFlags: allFlags,
+    capFlags: capFlags,
+    jiqFlags: jiqFlags,
+    scFlags: scFlags,
+    transcriptFlags: transcriptFlags
+  };
+}
+
+function renderAgendaFromTranscript(ctx) {
+  // Support both old (transcript-only) and new (unified context) call signatures
+  var data = ctx.transcript || ctx; // ctx.transcript if unified, else ctx is the transcript directly
+  var allFlags = ctx.allFlags || [];
+  var capacity = ctx.capacity || null;
+  var jiq = ctx.jiq || null;
+  var scorecard = ctx.scorecard || null;
+
   // Hide no-data state
   var noData = document.getElementById('dynNoData');
   if (noData) noData.style.display = 'none';
@@ -3623,124 +3815,236 @@ function renderAgendaFromTranscript(data) {
   var titleEl = document.getElementById('dynMeetingTitle');
   var metaEl = document.getElementById('dynMeetingMeta');
   if (titleEl) titleEl.textContent = 'The LinkUs Standard — This Week';
-  if (metaEl) metaEl.textContent = 'Tuesday · 1:00–2:00 PM PST · 60 Minutes Strict · Based on ' + data.label;
+  var sourceLabel = data ? data.label : 'All available data';
+  if (metaEl) metaEl.textContent = 'Tuesday · 1:00–2:00 PM PST · 60 Minutes Strict · Based on ' + sourceLabel;
 
-  // Alert strip
+  // ── ALERT STRIP: critical flags from any source ──
   var alertStrip = document.getElementById('dynAlertStrip');
   if (alertStrip) {
-    var atRisk = data.metrics.filter(function(m){ return m.status === 'At Risk'; });
-    if (atRisk.length > 0) {
+    var criticals = allFlags.filter(function(f){ return f.severity === 'critical'; });
+    if (criticals.length > 0) {
       alertStrip.style.display = 'block';
-      alertStrip.innerHTML = '<div style="background:#fef2f2;border:2px solid var(--red);border-radius:var(--radius);padding:14px 20px;display:flex;align-items:center;gap:12px;"><span style="font-size:1.4rem;">🚨</span><div><strong style="color:var(--red);font-size:0.95rem;">' + atRisk.length + ' metric' + (atRisk.length > 1 ? 's' : '') + ' flagged at-risk from last week\'s transcript</strong> — ' + atRisk.map(function(m){ return m.metric + ' (' + m.value + ')'; }).join(', ') + '</div></div>';
+      alertStrip.innerHTML = '<div style="background:#fef2f2;border:2px solid var(--red);border-radius:var(--radius);padding:14px 20px;display:flex;align-items:center;gap:12px;"><span style="font-size:1.4rem;">🚨</span><div><strong style="color:var(--red);font-size:0.95rem;">' + criticals.length + ' critical issue' + (criticals.length > 1 ? 's' : '') + ' require immediate attention</strong> — ' + criticals.map(function(f){ return f.title; }).join(' · ') + '</div></div>';
     } else {
       alertStrip.style.display = 'none';
     }
   }
 
-  // Data status
+  // ── DATA SOURCE STATUS CARDS ──
   var dss = document.getElementById('dynDataStatus');
   if (dss) {
-    dss.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;border-left:4px solid var(--green);"><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:6px;">Transcript Source</div><div style="font-weight:800;color:var(--navy);">' + data.label + '</div><div style="font-size:0.82rem;color:var(--gray-text);margin-top:4px;">' + data.wordCount.toLocaleString() + ' words · ' + data.date + '</div></div>' +
-      '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;border-left:4px solid ' + (data.commitments.length > 0 ? 'var(--green)' : 'var(--gray-mid)') + ';"><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:6px;">Items Extracted</div><div style="font-weight:800;color:var(--navy);">' + data.commitments.length + ' commitments · ' + data.barriers.length + ' barriers</div><div style="font-size:0.82rem;color:var(--gray-text);margin-top:4px;">' + data.wins.length + ' wins · ' + data.metrics.length + ' metrics mentioned</div></div>';
+    var cards = [];
+    if (data) {
+      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid var(--green);"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📄 Transcript</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">' + (data.label || 'Loaded') + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">' + ((data.wordCount||0).toLocaleString()) + ' words · ' + (data.commitments||[]).length + ' commitments · ' + (data.barriers||[]).length + ' barriers</div></div>');
+    }
+    if (capacity && capacity.totals) {
+      var gapColor = capacity.totals.dishGap < -4 ? 'var(--red)' : capacity.totals.dishGap < 0 ? 'var(--yellow)' : 'var(--green)';
+      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid ' + gapColor + ';"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📋 Book 20 Capacity</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">' + (capacity.sheetName || capacity.uploadDate || 'Loaded') + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">DISH Gap: <strong style="color:' + gapColor + ';">' + capacity.totals.dishGap + '</strong> · Routable: ' + capacity.totals.routable + ' · Target: ' + capacity.totals.dishRPM + '</div></div>');
+    }
+    if (jiq) {
+      var qColor = jiq.quotaPct >= 90 ? 'var(--green)' : jiq.quotaPct >= 75 ? 'var(--yellow)' : 'var(--red)';
+      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid ' + qColor + ';"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📦 JIQ</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">Week of ' + jiq.week + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">Quota: <strong style="color:' + qColor + ';">' + (jiq.quotaPct||0).toFixed(1) + '%</strong> · Grand Total JIQ: ' + (jiq.grandTotal||0).toLocaleString() + ' · SOD: ' + (jiq.sod||0).toLocaleString() + '</div></div>');
+    }
+    if (scorecard && scorecard.offices) {
+      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid var(--blue-accent);"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📊 Scorecard</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">' + scorecard.week + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">' + scorecard.offices.length + ' offices · Goals: AC10 ' + (scorecard.goals&&scorecard.goals.ac10||'—') + ' · DCR ' + (scorecard.goals&&scorecard.goals.allDCR||'—') + ' · NPS ' + (scorecard.goals&&scorecard.goals.allNPS||'—') + '</div></div>');
+    }
+    dss.style.gridTemplateColumns = 'repeat(auto-fit, minmax(220px, 1fr))';
+    dss.innerHTML = cards.join('');
   }
 
-  // Priority flags from transcript
+  // ── PRIORITY FLAGS: all sources combined ──
   var pf = document.getElementById('dynPriorityFlags');
   if (pf) {
-    if (data.metrics.length === 0 && data.barriers.length === 0) {
-      pf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No critical flags extracted from transcript</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">No at-risk metrics or barriers were identified. Review transcript manually if needed.</div></div></div>';
+    if (allFlags.length === 0) {
+      pf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No critical flags this week</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">All available data sources show no at-risk metrics, capacity gaps, or JIQ issues.</div></div></div>';
     } else {
       var flagHtml = '<div style="display:grid;gap:12px;">';
-      data.metrics.filter(function(m){ return m.status === 'At Risk'; }).forEach(function(m) {
-        flagHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 22px;border-left:5px solid var(--red);"><div style="font-weight:800;font-size:0.95rem;color:var(--navy);margin-bottom:4px;">🚨 ' + m.metric + ' — At Risk (' + m.value + ')</div><div style="font-size:0.85rem;color:#374151;">Flagged in last week\'s transcript as below target. Prioritize in Scoreboard Pulse and 45-Second Drills.</div></div>';
-      });
-      data.barriers.slice(0,3).forEach(function(b) {
-        flagHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 22px;border-left:5px solid var(--yellow);"><div style="font-weight:800;font-size:0.95rem;color:var(--navy);margin-bottom:4px;">⚠ Barrier Identified</div><div style="font-size:0.85rem;color:#374151;">' + b + '</div></div>';
+      allFlags.forEach(function(f) {
+        var sourceBadge = '<span style="background:' + f.color + ';color:white;border-radius:5px;padding:2px 8px;font-size:0.7rem;font-weight:700;margin-left:8px;">' + f.source + '</span>';
+        flagHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 22px;border-left:5px solid ' + f.color + ';">' +
+          '<div style="font-weight:800;font-size:0.95rem;color:var(--navy);margin-bottom:6px;">' + f.icon + ' ' + f.title + sourceBadge + '</div>' +
+          '<div style="font-size:0.85rem;color:#374151;line-height:1.55;margin-bottom:8px;">' + f.detail + '</div>' +
+          '<div style="font-size:0.8rem;color:var(--gray-text);background:#f8fafc;border-radius:6px;padding:6px 10px;">\u27a1 ' + f.action + '</div>' +
+          '</div>';
       });
       flagHtml += '</div>';
       pf.innerHTML = flagHtml;
     }
   }
 
-  // Agenda timeline - standard 9-segment flow
+  // ── MEETING FLOW TIMELINE: data-driven time allocations ──
   var timeline = document.getElementById('dynAgendaTimeline');
   if (timeline) {
+    var criticalCount = allFlags.filter(function(f){ return f.severity === 'critical'; }).length;
+    var hasCapGap = capacity && capacity.totals && capacity.totals.dishGap < 0;
+    var hasJIQIssue = jiq && (jiq.quotaPct < 90 || jiq.grandTotal > 500);
+    var commitments = data ? (data.commitments || []) : [];
+    var transcriptMetrics = data ? (data.metrics || []) : [];
+    var transcriptBarriers = data ? (data.barriers || []) : [];
+    var transcriptWins = data ? (data.wins || []) : [];
+
+    var barrierTime = 14;
+    var scoreboardTime = 14;
+    var drillTime = 10;
+    if (criticalCount >= 2) { barrierTime = 18; scoreboardTime = 12; drillTime = 12; }
+    else if (criticalCount === 1 || hasCapGap || hasJIQIssue) { barrierTime = 16; scoreboardTime = 13; drillTime = 11; }
+
+    var drillLeaderNames = commitments.map(function(c){ return c.leader; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
+
+    // Build scorecard note
+    var scNote = '';
+    if (scorecard && scorecard.offices && scorecard.offices.length) {
+      var parseV = function(v){ return parseFloat(String(v||'').replace(/[%$,]/g,''))||null; };
+      var avgAC10 = (function(){ var vs=scorecard.offices.map(function(o){return parseV(o.ac10);}).filter(function(v){return v!==null;}); return vs.length?(vs.reduce(function(a,b){return a+b;},0)/vs.length).toFixed(1)+'%':'N/A'; })();
+      var avgDCR = (function(){ var vs=scorecard.offices.map(function(o){return parseV(o.allDCR);}).filter(function(v){return v!==null;}); return vs.length?(vs.reduce(function(a,b){return a+b;},0)/vs.length).toFixed(1)+'%':'N/A'; })();
+      var avgNPS = (function(){ var vs=scorecard.offices.map(function(o){return parseV(o.allNPS);}).filter(function(v){return v!==null;}); return vs.length?(vs.reduce(function(a,b){return a+b;},0)/vs.length).toFixed(1):'N/A'; })();
+      scNote = 'Region avg — AC10: ' + avgAC10 + ' (goal: ' + (scorecard.goals&&scorecard.goals.ac10||'76%') + ') · DCR: ' + avgDCR + ' (goal: ' + (scorecard.goals&&scorecard.goals.allDCR||'88%') + ') · NPS: ' + avgNPS + '. Focus on offices below goal.';
+    } else if (transcriptMetrics.length > 0) {
+      scNote = 'From transcript — ' + transcriptMetrics.map(function(m){ return m.metric + ': ' + m.value; }).join(', ') + '. Confirm current status.';
+    } else {
+      scNote = 'Review all KPIs — exceptions only. No scorecard data uploaded yet.';
+    }
+
+    // Build capacity/JIQ note for barrier segment
+    var barrierNote = '';
+    if (hasCapGap && hasJIQIssue) {
+      barrierNote = 'PRIORITY: Capacity gap (' + capacity.totals.dishGap + ') is driving JIQ growth (' + jiq.grandTotal.toLocaleString() + ' jobs). DROOM both issues.';
+    } else if (hasCapGap) {
+      barrierNote = 'Capacity gap: ' + capacity.totals.dishGap + ' DISH shortfall. Identify which offices are blocking routable conversion.';
+    } else if (hasJIQIssue) {
+      barrierNote = 'JIQ elevated at ' + jiq.grandTotal.toLocaleString() + ' jobs. Quota at ' + (jiq.quotaPct||0).toFixed(1) + '%. Diagnose root cause.';
+    } else if (transcriptBarriers.length > 0) {
+      barrierNote = 'From last meeting: ' + transcriptBarriers.slice(0,2).join(' · ');
+    } else {
+      barrierNote = 'Address top organizational blockers using DROOM: Define → Root Cause → Decision → Owner → Measure.';
+    }
+
     var agendaItems = [
-      { num:'01', icon:'🎯', name:'Open + Purpose', time:'2 min', owner:'Dant Morris', note: data.metrics.filter(function(m){return m.status==='At Risk';}).length > 0 ? 'Focus: ' + data.metrics.filter(function(m){return m.status==='At Risk';}).map(function(m){return m.metric;}).join(', ') + ' recovery' : 'All metrics reviewed — reinforce what\'s working' },
-      { num:'02', icon:'🏆', name:'Wins & Recognition', time:'5 min', owner:'Dant Morris', note: data.wins.length > 0 ? data.wins.slice(0,2).join(' · ') : 'Recognize 1–2 specific wins from last week' },
-      { num:'03', icon:'🔄', name:'Last Week\'s Commitments', time:'3 min', owner:'Dant Morris', note: data.commitments.length > 0 ? data.commitments.length + ' commitments to review: ' + data.commitments.slice(0,3).map(function(c){return c.leader + ' — ' + c.commitment.slice(0,60) + (c.commitment.length > 60 ? '...' : '');}).join(' | ') : 'No commitments extracted — review manually' },
-      { num:'04', icon:'👥', name:'Customer Reality', time:'4 min', owner:'Rotating GM', note:'One real customer story from the field this week' },
-      { num:'05', icon:'📊', name:'Scoreboard Pulse', time:'14 min', owner:'Dave Betts', note: data.metrics.length > 0 ? 'Metrics from transcript: ' + data.metrics.map(function(m){return m.metric + ' ' + m.value;}).join(', ') : 'Review all 4 KPIs — exceptions only' },
-      { num:'06', icon:'💡', name:'Standard Spotlight', time:'8 min', owner:'Assigned Office', note:'One office shares a winning standard in depth' },
-      { num:'07', icon:'🎯', name:'45-Second Drills', time:'10 min', owner:'All Leaders', note: data.commitments.length > 0 ? data.commitments.map(function(c){return c.leader;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(', ') + ' — each gets 45 seconds' : 'Leaders with at-risk metrics get 45 seconds each' },
-      { num:'08', icon:'🚧', name:'Barrier Busters', time:'14 min', owner:'Dant Morris', note: data.barriers.length > 0 ? 'Top barriers: ' + data.barriers.slice(0,2).join(' · ') : 'Address top organizational blockers using DROOM' },
-      { num:'09', icon:'🤝', name:'Weekly Commitments', time:'6 min', owner:'All Leaders', note:'Each leader states one specific measurable commitment' },
-      { num:'10', icon:'🔒', name:'Close + Recap', time:'2 min', owner:'Dant Morris', note:'Recap commitments, confirm next week\'s date, close on standard' }
+      { num:'01', icon:'🔔', name:'Open + Purpose', time:'2 min', owner:'Dant Morris',
+        note: criticalCount > 0 ? criticalCount + ' critical issue' + (criticalCount>1?'s':'') + ' flagged — ' + allFlags.filter(function(f){return f.severity==='critical';}).map(function(f){return f.title;}).join(', ') : 'All data reviewed — reinforce what\'s working and set the standard for the week.' },
+      { num:'02', icon:'🏆', name:'Wins & Recognition', time:'5 min', owner:'Dant Morris',
+        note: transcriptWins.length > 0 ? transcriptWins.slice(0,2).join(' · ') : 'Recognize 1–2 specific wins from last week. Name the leader, the action, and the result.' },
+      { num:'03', icon:'🔄', name:'Last Week\'s Commitments', time:'3 min', owner:'Dant Morris',
+        note: commitments.length > 0 ? commitments.length + ' commitments to review: ' + commitments.slice(0,3).map(function(c){ return c.leader + ' — ' + c.commitment.slice(0,55) + (c.commitment.length>55?'...':''); }).join(' | ') : 'Rapid accountability check. Each leader: Done / Not Done / In Progress. No explanations.' },
+      { num:'04', icon:'👥', name:'Customer Reality', time:'4 min', owner:'Rotating GM',
+        note: 'One real customer story from the field this week. What happened, what the customer experienced, and what it means for our standard.' },
+      { num:'05', icon:'📊', name:'Scoreboard Pulse', time:scoreboardTime + ' min', owner:'Dave Betts',
+        note: scNote },
+      { num:'06', icon:'💡', name:'Standard Spotlight', time:'8 min', owner:'Assigned Office',
+        note: criticalCount >= 2 ? 'Shortened this week — critical metric recovery takes priority. One practice, one result, one replication ask.' : 'One office shares a winning standard in depth. What they did, how they did it, and how others can replicate it.' },
+      { num:'07', icon:'🎯', name:'45-Second Drills', time:drillTime + ' min', owner:'All Leaders',
+        note: drillLeaderNames.length > 0 ? drillLeaderNames.join(', ') + ' — each gets 45 seconds: metric → root cause → action → measurement.' : (allFlags.length > 0 ? 'Leaders with flagged metrics each get 45 seconds: metric → root cause → action → measurement.' : 'No drills required this week — all metrics on track.') },
+      { num:'08', icon:'🚧', name:'Barrier Busters', time:barrierTime + ' min', owner:'Dant Morris',
+        note: barrierNote },
+      { num:'09', icon:'🤝', name:'Weekly Commitments', time:'6 min', owner:'All Leaders',
+        note: 'Each leader states one specific measurable commitment. Format: "By next Tuesday, I will [action] measured by [metric]."' },
+      { num:'10', icon:'🔒', name:'Close + Recap', time:'2 min', owner:'Dant Morris',
+        note: 'Recap all commitments. Confirm next week\'s date. Close on the standard.' }
     ];
+
     var html = '<div style="display:grid;gap:10px;">';
     agendaItems.forEach(function(seg) {
       html += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:16px;">' +
         '<div style="background:var(--navy);color:var(--gold-light);border-radius:8px;padding:6px 10px;font-size:0.78rem;font-weight:800;white-space:nowrap;text-align:center;min-width:44px;">' + seg.num + '<br>' + seg.time + '</div>' +
         '<div style="flex:1;"><div style="font-weight:800;font-size:0.95rem;color:var(--navy);">' + seg.icon + ' ' + seg.name + ' <span style="font-size:0.78rem;font-weight:600;color:var(--gray-text);">| ' + seg.owner + '</span></div>' +
-        '<div style="font-size:0.83rem;color:#374151;margin-top:4px;line-height:1.5;">' + seg.note + '</div></div></div>';
+        '<div style="font-size:0.83rem;color:#374151;margin-top:4px;line-height:1.55;">' + seg.note + '</div></div></div>';
     });
     html += '</div>';
     timeline.innerHTML = html;
   }
 
-  // Commitments
+  // ── COMMITMENTS: from transcript ──
   var cc = document.getElementById('dynCommitmentCheck');
   if (cc) {
-    if (data.commitments.length === 0) {
-      cc.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No commitments were extracted from the transcript. Review the meeting notes manually.</div>';
+    var commits = data ? (data.commitments || []) : [];
+    if (commits.length === 0) {
+      cc.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No commitments were extracted from the transcript. Review the meeting notes manually and add commitments here.</div>';
     } else {
       var cHtml = '<div style="display:grid;gap:10px;">';
-      data.commitments.forEach(function(c) {
+      commits.forEach(function(c) {
         cHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:14px;">' +
-          '<div style="background:var(--navy);color:white;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.88rem;flex-shrink:0;">' + c.leader.slice(0,2).toUpperCase() + '</div>' +
-          '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + c.leader + '</div><div style="font-size:0.85rem;color:#374151;margin-top:4px;">' + c.commitment + '</div>' +
-          '<div style="margin-top:8px;"><span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:700;">⏳ Status: Pending Review</span></div></div></div>';
+          '<div style="background:var(--navy);color:white;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.88rem;flex-shrink:0;">' + (c.leader||'?').slice(0,2).toUpperCase() + '</div>' +
+          '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + (c.leader||'Unknown') + '</div>' +
+          '<div style="font-size:0.85rem;color:#374151;margin-top:4px;line-height:1.5;">' + c.commitment + '</div>' +
+          '<div style="margin-top:8px;"><span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:700;">⏳ Pending Review This Week</span></div>' +
+          '</div></div>';
       });
       cHtml += '</div>';
       cc.innerHTML = cHtml;
     }
   }
 
-  // Drill order
+  // ── DRILL ORDER: leaders from commitments + scorecard flags ──
   var drillDiv = document.getElementById('dynDrillOrder');
   if (drillDiv) {
-    var drillLeaders = data.commitments.map(function(c){ return c.leader; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
-    if (drillLeaders.length === 0 && data.metrics.filter(function(m){return m.status==='At Risk';}).length === 0) {
-      drillDiv.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No drills required this week</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">No at-risk leaders identified from transcript.</div></div></div>';
+    var commitList = data ? (data.commitments || []) : [];
+    var drillNames = commitList.map(function(c){ return c.leader; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
+    // Also add leaders from scorecard offices below goal
+    if (scorecard && scorecard.offices && scorecard.goals) {
+      var parseV2 = function(v){ return parseFloat(String(v||'').replace(/[%$,]/g,''))||null; };
+      var goalAC10 = parseV2(scorecard.goals.ac10);
+      scorecard.offices.forEach(function(o) {
+        var v = parseV2(o.ac10);
+        if (goalAC10 && v !== null && v < goalAC10 * 0.97) {
+          if (drillNames.indexOf(o.office) === -1) drillNames.push(o.office + ' (AC10 below goal)');
+        }
+      });
+    }
+    if (drillNames.length === 0 && allFlags.length === 0) {
+      drillDiv.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No drills required this week</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">No at-risk leaders or metrics identified across all data sources.</div></div></div>';
     } else {
       var dHtml = '<div style="display:grid;gap:10px;">';
-      drillLeaders.forEach(function(leader, i) {
-        var leaderCommits = data.commitments.filter(function(c){ return c.leader === leader; });
+      drillNames.forEach(function(leader, i) {
+        var leaderCommits = commitList.filter(function(c){ return c.leader === leader; });
         dHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:14px;">' +
           '<div style="background:var(--red);color:white;border-radius:8px;padding:6px 12px;font-size:0.88rem;font-weight:800;white-space:nowrap;">#' + (i+1) + '</div>' +
           '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + leader + '</div>' +
-          '<div style="font-size:0.83rem;color:#374151;margin-top:4px;">' + leaderCommits.map(function(c){ return c.commitment.slice(0,100) + (c.commitment.length > 100 ? '...' : ''); }).join(' | ') + '</div>' +
-          '<div style="margin-top:8px;font-size:0.78rem;color:var(--gray-text);">45 seconds: metric → root cause → action → measurement</div></div></div>';
+          (leaderCommits.length > 0 ? '<div style="font-size:0.83rem;color:#374151;margin-top:4px;">' + leaderCommits.map(function(c){ return c.commitment.slice(0,100)+(c.commitment.length>100?'...':''); }).join(' | ') + '</div>' : '') +
+          '<div style="margin-top:8px;font-size:0.78rem;color:var(--gray-text);background:#f8fafc;border-radius:6px;padding:5px 10px;">45 seconds: metric → root cause → action → measurement</div>' +
+          '</div></div>';
       });
       dHtml += '</div>';
       drillDiv.innerHTML = dHtml;
     }
   }
 
-  // Barrier focus
+  // ── BARRIER FOCUS: capacity + JIQ + transcript barriers ──
   var bf = document.getElementById('dynBarrierFocus');
   if (bf) {
-    if (data.barriers.length === 0) {
-      bf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No barriers were extracted from the transcript. Use this time to address any emerging blockers raised in the meeting.</div>';
+    var barrierItems = [];
+    // Capacity barriers
+    if (capacity && capacity.totals && capacity.totals.dishGap < 0) {
+      barrierItems.push({ icon: '📋', label: 'Book 20 Capacity Gap', text: 'DISH gap: ' + capacity.totals.dishGap + ' (' + capacity.totals.routable + ' routable vs ' + capacity.totals.dishRPM + ' target). Pipeline: ' + capacity.totals.totalPipeline + '. Onboarding: ' + capacity.totals.onboard + '.', color: 'var(--red)' });
+    }
+    // JIQ barriers
+    if (jiq && jiq.grandTotal > 500) {
+      barrierItems.push({ icon: '📦', label: 'JIQ Backlog: ' + jiq.grandTotal.toLocaleString() + ' Jobs', text: 'Quota consumption: ' + (jiq.quotaPct||0).toFixed(1) + '%. TC share: ' + (jiq.tc||0).toFixed(1) + '%. Starlink: ' + (jiq.starlink||0).toFixed(1) + '%. ' + (jiq.regions&&jiq.regions.length>0 ? 'Highest regions: ' + jiq.regions.sort(function(a,b){return b.total-a.total;}).slice(0,3).map(function(r){return r.car+' ('+r.total+')';}).join(', ') : ''), color: 'var(--yellow)' });
+    }
+    // Transcript barriers
+    if (data && data.barriers) {
+      data.barriers.slice(0,3).forEach(function(b, i) {
+        barrierItems.push({ icon: '🎤', label: 'From Last Meeting', text: b, color: 'var(--blue-accent)' });
+      });
+    }
+    if (barrierItems.length === 0) {
+      bf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No barriers identified across data sources. Use this time to address any emerging blockers raised live in the meeting.</div>';
     } else {
       var bHtml = '<div style="display:grid;gap:10px;">';
-      data.barriers.slice(0,5).forEach(function(b, i) {
-        bHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;border-left:5px solid var(--yellow);"><div style="font-weight:800;color:var(--navy);margin-bottom:6px;">🚧 Barrier ' + (i+1) + '</div><div style="font-size:0.85rem;color:#374151;">' + b + '</div><div style="margin-top:10px;font-size:0.78rem;color:var(--gray-text);">DROOM: Define → Root Cause → Decision → Owner → Measure</div></div>';
+      barrierItems.forEach(function(b, i) {
+        bHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;border-left:5px solid ' + b.color + ';">' +
+          '<div style="font-weight:800;color:var(--navy);margin-bottom:6px;">' + b.icon + ' ' + b.label + '</div>' +
+          '<div style="font-size:0.85rem;color:#374151;line-height:1.55;">' + b.text + '</div>' +
+          '<div style="margin-top:10px;font-size:0.78rem;color:var(--gray-text);background:#f8fafc;border-radius:6px;padding:5px 10px;">DROOM: Define → Root Cause → Decision → Owner → Measure</div>' +
+          '</div>';
       });
       bHtml += '</div>';
       bf.innerHTML = bHtml;
     }
   }
+
+  // ── SCROLL to agenda ──
+  var meetingCard = document.getElementById('dynMeetingCard');
+  if (meetingCard) { setTimeout(function(){ meetingCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 200); }
 }
 
 function processTranscriptPaste() {
