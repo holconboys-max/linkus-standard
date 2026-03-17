@@ -3606,10 +3606,141 @@ function buildAgendaFromDynTab() {
       pushedAt: new Date().toISOString()
     }));
 
-    // Trigger the dynamic agenda render
-    if (typeof renderDynamicAgenda === 'function') renderDynamicAgenda();
-    document.getElementById('dynNoData').style.display = 'none';
+    // Render agenda directly from transcript data
+    renderAgendaFromTranscript(result);
   }, 600);
+}
+
+function renderAgendaFromTranscript(data) {
+  // Hide no-data state
+  var noData = document.getElementById('dynNoData');
+  if (noData) noData.style.display = 'none';
+
+  // Show all section titles
+  document.querySelectorAll('#tab-dynamic .section-title').forEach(function(el) { el.style.display = ''; });
+
+  // Meeting card
+  var titleEl = document.getElementById('dynMeetingTitle');
+  var metaEl = document.getElementById('dynMeetingMeta');
+  if (titleEl) titleEl.textContent = 'The LinkUs Standard — This Week';
+  if (metaEl) metaEl.textContent = 'Tuesday · 1:00–2:00 PM PST · 60 Minutes Strict · Based on ' + data.label;
+
+  // Alert strip
+  var alertStrip = document.getElementById('dynAlertStrip');
+  if (alertStrip) {
+    var atRisk = data.metrics.filter(function(m){ return m.status === 'At Risk'; });
+    if (atRisk.length > 0) {
+      alertStrip.style.display = 'block';
+      alertStrip.innerHTML = '<div style="background:#fef2f2;border:2px solid var(--red);border-radius:var(--radius);padding:14px 20px;display:flex;align-items:center;gap:12px;"><span style="font-size:1.4rem;">🚨</span><div><strong style="color:var(--red);font-size:0.95rem;">' + atRisk.length + ' metric' + (atRisk.length > 1 ? 's' : '') + ' flagged at-risk from last week\'s transcript</strong> — ' + atRisk.map(function(m){ return m.metric + ' (' + m.value + ')'; }).join(', ') + '</div></div>';
+    } else {
+      alertStrip.style.display = 'none';
+    }
+  }
+
+  // Data status
+  var dss = document.getElementById('dynDataStatus');
+  if (dss) {
+    dss.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;border-left:4px solid var(--green);"><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:6px;">Transcript Source</div><div style="font-weight:800;color:var(--navy);">' + data.label + '</div><div style="font-size:0.82rem;color:var(--gray-text);margin-top:4px;">' + data.wordCount.toLocaleString() + ' words · ' + data.date + '</div></div>' +
+      '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;border-left:4px solid ' + (data.commitments.length > 0 ? 'var(--green)' : 'var(--gray-mid)') + ';"><div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:6px;">Items Extracted</div><div style="font-weight:800;color:var(--navy);">' + data.commitments.length + ' commitments · ' + data.barriers.length + ' barriers</div><div style="font-size:0.82rem;color:var(--gray-text);margin-top:4px;">' + data.wins.length + ' wins · ' + data.metrics.length + ' metrics mentioned</div></div>';
+  }
+
+  // Priority flags from transcript
+  var pf = document.getElementById('dynPriorityFlags');
+  if (pf) {
+    if (data.metrics.length === 0 && data.barriers.length === 0) {
+      pf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No critical flags extracted from transcript</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">No at-risk metrics or barriers were identified. Review transcript manually if needed.</div></div></div>';
+    } else {
+      var flagHtml = '<div style="display:grid;gap:12px;">';
+      data.metrics.filter(function(m){ return m.status === 'At Risk'; }).forEach(function(m) {
+        flagHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 22px;border-left:5px solid var(--red);"><div style="font-weight:800;font-size:0.95rem;color:var(--navy);margin-bottom:4px;">🚨 ' + m.metric + ' — At Risk (' + m.value + ')</div><div style="font-size:0.85rem;color:#374151;">Flagged in last week\'s transcript as below target. Prioritize in Scoreboard Pulse and 45-Second Drills.</div></div>';
+      });
+      data.barriers.slice(0,3).forEach(function(b) {
+        flagHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 22px;border-left:5px solid var(--yellow);"><div style="font-weight:800;font-size:0.95rem;color:var(--navy);margin-bottom:4px;">⚠ Barrier Identified</div><div style="font-size:0.85rem;color:#374151;">' + b + '</div></div>';
+      });
+      flagHtml += '</div>';
+      pf.innerHTML = flagHtml;
+    }
+  }
+
+  // Agenda timeline - standard 9-segment flow
+  var timeline = document.getElementById('dynAgendaTimeline');
+  if (timeline) {
+    var agendaItems = [
+      { num:'01', icon:'🎯', name:'Open + Purpose', time:'2 min', owner:'Dant Morris', note: data.metrics.filter(function(m){return m.status==='At Risk';}).length > 0 ? 'Focus: ' + data.metrics.filter(function(m){return m.status==='At Risk';}).map(function(m){return m.metric;}).join(', ') + ' recovery' : 'All metrics reviewed — reinforce what\'s working' },
+      { num:'02', icon:'🏆', name:'Wins & Recognition', time:'5 min', owner:'Dant Morris', note: data.wins.length > 0 ? data.wins.slice(0,2).join(' · ') : 'Recognize 1–2 specific wins from last week' },
+      { num:'03', icon:'🔄', name:'Last Week\'s Commitments', time:'3 min', owner:'Dant Morris', note: data.commitments.length > 0 ? data.commitments.length + ' commitments to review: ' + data.commitments.slice(0,3).map(function(c){return c.leader + ' — ' + c.commitment.slice(0,60) + (c.commitment.length > 60 ? '...' : '');}).join(' | ') : 'No commitments extracted — review manually' },
+      { num:'04', icon:'👥', name:'Customer Reality', time:'4 min', owner:'Rotating GM', note:'One real customer story from the field this week' },
+      { num:'05', icon:'📊', name:'Scoreboard Pulse', time:'14 min', owner:'Dave Betts', note: data.metrics.length > 0 ? 'Metrics from transcript: ' + data.metrics.map(function(m){return m.metric + ' ' + m.value;}).join(', ') : 'Review all 4 KPIs — exceptions only' },
+      { num:'06', icon:'💡', name:'Standard Spotlight', time:'8 min', owner:'Assigned Office', note:'One office shares a winning standard in depth' },
+      { num:'07', icon:'🎯', name:'45-Second Drills', time:'10 min', owner:'All Leaders', note: data.commitments.length > 0 ? data.commitments.map(function(c){return c.leader;}).filter(function(v,i,a){return a.indexOf(v)===i;}).join(', ') + ' — each gets 45 seconds' : 'Leaders with at-risk metrics get 45 seconds each' },
+      { num:'08', icon:'🚧', name:'Barrier Busters', time:'14 min', owner:'Dant Morris', note: data.barriers.length > 0 ? 'Top barriers: ' + data.barriers.slice(0,2).join(' · ') : 'Address top organizational blockers using DROOM' },
+      { num:'09', icon:'🤝', name:'Weekly Commitments', time:'6 min', owner:'All Leaders', note:'Each leader states one specific measurable commitment' },
+      { num:'10', icon:'🔒', name:'Close + Recap', time:'2 min', owner:'Dant Morris', note:'Recap commitments, confirm next week\'s date, close on standard' }
+    ];
+    var html = '<div style="display:grid;gap:10px;">';
+    agendaItems.forEach(function(seg) {
+      html += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:16px;">' +
+        '<div style="background:var(--navy);color:var(--gold-light);border-radius:8px;padding:6px 10px;font-size:0.78rem;font-weight:800;white-space:nowrap;text-align:center;min-width:44px;">' + seg.num + '<br>' + seg.time + '</div>' +
+        '<div style="flex:1;"><div style="font-weight:800;font-size:0.95rem;color:var(--navy);">' + seg.icon + ' ' + seg.name + ' <span style="font-size:0.78rem;font-weight:600;color:var(--gray-text);">| ' + seg.owner + '</span></div>' +
+        '<div style="font-size:0.83rem;color:#374151;margin-top:4px;line-height:1.5;">' + seg.note + '</div></div></div>';
+    });
+    html += '</div>';
+    timeline.innerHTML = html;
+  }
+
+  // Commitments
+  var cc = document.getElementById('dynCommitmentCheck');
+  if (cc) {
+    if (data.commitments.length === 0) {
+      cc.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No commitments were extracted from the transcript. Review the meeting notes manually.</div>';
+    } else {
+      var cHtml = '<div style="display:grid;gap:10px;">';
+      data.commitments.forEach(function(c) {
+        cHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:14px;">' +
+          '<div style="background:var(--navy);color:white;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.88rem;flex-shrink:0;">' + c.leader.slice(0,2).toUpperCase() + '</div>' +
+          '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + c.leader + '</div><div style="font-size:0.85rem;color:#374151;margin-top:4px;">' + c.commitment + '</div>' +
+          '<div style="margin-top:8px;"><span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:700;">⏳ Status: Pending Review</span></div></div></div>';
+      });
+      cHtml += '</div>';
+      cc.innerHTML = cHtml;
+    }
+  }
+
+  // Drill order
+  var drillDiv = document.getElementById('dynDrillOrder');
+  if (drillDiv) {
+    var drillLeaders = data.commitments.map(function(c){ return c.leader; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
+    if (drillLeaders.length === 0 && data.metrics.filter(function(m){return m.status==='At Risk';}).length === 0) {
+      drillDiv.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No drills required this week</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">No at-risk leaders identified from transcript.</div></div></div>';
+    } else {
+      var dHtml = '<div style="display:grid;gap:10px;">';
+      drillLeaders.forEach(function(leader, i) {
+        var leaderCommits = data.commitments.filter(function(c){ return c.leader === leader; });
+        dHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:14px;">' +
+          '<div style="background:var(--red);color:white;border-radius:8px;padding:6px 12px;font-size:0.88rem;font-weight:800;white-space:nowrap;">#' + (i+1) + '</div>' +
+          '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + leader + '</div>' +
+          '<div style="font-size:0.83rem;color:#374151;margin-top:4px;">' + leaderCommits.map(function(c){ return c.commitment.slice(0,100) + (c.commitment.length > 100 ? '...' : ''); }).join(' | ') + '</div>' +
+          '<div style="margin-top:8px;font-size:0.78rem;color:var(--gray-text);">45 seconds: metric → root cause → action → measurement</div></div></div>';
+      });
+      dHtml += '</div>';
+      drillDiv.innerHTML = dHtml;
+    }
+  }
+
+  // Barrier focus
+  var bf = document.getElementById('dynBarrierFocus');
+  if (bf) {
+    if (data.barriers.length === 0) {
+      bf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No barriers were extracted from the transcript. Use this time to address any emerging blockers raised in the meeting.</div>';
+    } else {
+      var bHtml = '<div style="display:grid;gap:10px;">';
+      data.barriers.slice(0,5).forEach(function(b, i) {
+        bHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;border-left:5px solid var(--yellow);"><div style="font-weight:800;color:var(--navy);margin-bottom:6px;">🚧 Barrier ' + (i+1) + '</div><div style="font-size:0.85rem;color:#374151;">' + b + '</div><div style="margin-top:10px;font-size:0.78rem;color:var(--gray-text);">DROOM: Define → Root Cause → Decision → Owner → Measure</div></div>';
+      });
+      bHtml += '</div>';
+      bf.innerHTML = bHtml;
+    }
+  }
 }
 
 function processTranscriptPaste() {
