@@ -1126,26 +1126,27 @@
     </div>
 
     <!-- DATA SOURCE STATUS -->
-    <div id="dynDataStatus" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:24px;"></div>
-    <!-- PRIORITY FLAGS -->
-    <div class="section-title"><div class="icon">🚨</div>This Week's Priority Flags</div>
+    <div id="dynDataStatus" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:24px;"></div>
+
+    <!-- AT-A-GLANCE TABLE -->
+    <div class="section-title"><div class="icon">📋</div>At-a-Glance: All Owners &amp; Targets</div>
+    <div id="dynAtAGlance" style="margin-bottom:28px;"></div>
+
+    <!-- SCOREBOARD PULSE — PER LEADER CARDS -->
+    <div class="section-title"><div class="icon">⏱</div>1 &nbsp; Scoreboard Pulse — 45-Second Drill per Leader <span style="font-size:0.8rem;font-weight:600;color:var(--gray-text);margin-left:8px;">15 min · Led by Dave Betts · Exceptions only</span></div>
     <div id="dynPriorityFlags" style="margin-bottom:28px;"></div>
 
-    <!-- DYNAMIC AGENDA TIMELINE -->
-    <div class="section-title"><div class="icon">⏱</div>Meeting Flow — 60 Minutes</div>
-    <div id="dynAgendaTimeline" style="margin-bottom:28px;"></div>
+    <!-- BARRIER BUSTERS -->
+    <div class="section-title"><div class="icon">🚧</div>2 &nbsp; Barrier Busters <span style="font-size:0.8rem;font-weight:600;color:var(--gray-text);margin-left:8px;">10 min · Define → Root Cause → Decision → Owner → Measure</span></div>
+    <div id="dynBarrierFocus" style="margin-bottom:28px;"></div>
 
-    <!-- COMMITMENT ACCOUNTABILITY -->
-    <div class="section-title"><div class="icon">✅</div>Last Week's Commitments — Due Today</div>
+    <!-- COMMITMENTS -->
+    <div class="section-title"><div class="icon">🤝</div>3 &nbsp; Commitments — By Next Tuesday, We Will... <span style="font-size:0.8rem;font-weight:600;color:var(--gray-text);margin-left:8px;">5 min</span></div>
     <div id="dynCommitmentCheck" style="margin-bottom:28px;"></div>
 
-    <!-- DRILL ORDER -->
-    <div class="section-title"><div class="icon">🎯</div>45-Second Drill Order (Priority Ranked)</div>
-    <div id="dynDrillOrder" style="margin-bottom:28px;"></div>
-
-    <!-- BARRIER FOCUS -->
-    <div class="section-title"><div class="icon">🚧</div>Barrier Buster Focus Areas</div>
-    <div id="dynBarrierFocus" style="margin-bottom:28px;"></div>
+    <!-- MEETING FLOW (hidden, used for print/copy) -->
+    <div id="dynAgendaTimeline" style="display:none;"></div>
+    <div id="dynDrillOrder" style="display:none;"></div>
 
     <!-- NO DATA STATE -->
     <div id="dynNoData" style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:48px;text-align:center;">
@@ -3797,84 +3798,195 @@ function gatherAllDataSources(transcriptResult) {
 }
 
 function renderAgendaFromTranscript(ctx) {
-  // Support both old (transcript-only) and new (unified context) call signatures
-  var data = ctx.transcript || ctx; // ctx.transcript if unified, else ctx is the transcript directly
+  var data = ctx.transcript || ctx;
   var allFlags = ctx.allFlags || [];
   var capacity = ctx.capacity || null;
   var jiq = ctx.jiq || null;
   var scorecard = ctx.scorecard || null;
 
-  // Hide no-data state
   var noData = document.getElementById('dynNoData');
   if (noData) noData.style.display = 'none';
-
-  // Show all section titles
   document.querySelectorAll('#tab-dynamic .section-title').forEach(function(el) { el.style.display = ''; });
 
-  // Meeting card
+  // ── MEETING CARD ──
   var titleEl = document.getElementById('dynMeetingTitle');
   var metaEl = document.getElementById('dynMeetingMeta');
-  if (titleEl) titleEl.textContent = 'The LinkUs Standard — This Week';
+  if (titleEl) titleEl.textContent = 'The LinkUs Standard — Action Items & Deliverables';
   var sourceLabel = data ? data.label : 'All available data';
-  if (metaEl) metaEl.textContent = 'Tuesday · 1:00–2:00 PM PST · 60 Minutes Strict · Based on ' + sourceLabel;
+  var todayStr = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  if (metaEl) metaEl.textContent = 'Weekly Leadership Meeting · Scoreboard Pulse Focus · ' + todayStr + ' · Based on: ' + sourceLabel;
 
-  // ── ALERT STRIP: critical flags from any source ──
+  // ── ALERT STRIP ──
   var alertStrip = document.getElementById('dynAlertStrip');
   if (alertStrip) {
     var criticals = allFlags.filter(function(f){ return f.severity === 'critical'; });
     if (criticals.length > 0) {
       alertStrip.style.display = 'block';
       alertStrip.innerHTML = '<div style="background:#fef2f2;border:2px solid var(--red);border-radius:var(--radius);padding:14px 20px;display:flex;align-items:center;gap:12px;"><span style="font-size:1.4rem;">🚨</span><div><strong style="color:var(--red);font-size:0.95rem;">' + criticals.length + ' critical issue' + (criticals.length > 1 ? 's' : '') + ' require immediate attention</strong> — ' + criticals.map(function(f){ return f.title; }).join(' · ') + '</div></div>';
-    } else {
-      alertStrip.style.display = 'none';
-    }
+    } else { alertStrip.style.display = 'none'; }
   }
 
-  // ── DATA SOURCE STATUS CARDS ──
+  // ── DATA SOURCE STATUS PILLS ──
   var dss = document.getElementById('dynDataStatus');
   if (dss) {
-    var cards = [];
-    if (data) {
-      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid var(--green);"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📄 Transcript</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">' + (data.label || 'Loaded') + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">' + ((data.wordCount||0).toLocaleString()) + ' words · ' + (data.commitments||[]).length + ' commitments · ' + (data.barriers||[]).length + ' barriers</div></div>');
-    }
-    if (capacity && capacity.totals) {
-      var gapColor = capacity.totals.dishGap < -4 ? 'var(--red)' : capacity.totals.dishGap < 0 ? 'var(--yellow)' : 'var(--green)';
-      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid ' + gapColor + ';"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📋 Book 20 Capacity</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">' + (capacity.sheetName || capacity.uploadDate || 'Loaded') + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">DISH Gap: <strong style="color:' + gapColor + ';">' + capacity.totals.dishGap + '</strong> · Routable: ' + capacity.totals.routable + ' · Target: ' + capacity.totals.dishRPM + '</div></div>');
-    }
-    if (jiq) {
-      var qColor = jiq.quotaPct >= 90 ? 'var(--green)' : jiq.quotaPct >= 75 ? 'var(--yellow)' : 'var(--red)';
-      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid ' + qColor + ';"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📦 JIQ</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">Week of ' + jiq.week + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">Quota: <strong style="color:' + qColor + ';">' + (jiq.quotaPct||0).toFixed(1) + '%</strong> · Grand Total JIQ: ' + (jiq.grandTotal||0).toLocaleString() + ' · SOD: ' + (jiq.sod||0).toLocaleString() + '</div></div>');
-    }
-    if (scorecard && scorecard.offices) {
-      cards.push('<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;border-left:4px solid var(--blue-accent);"><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;margin-bottom:4px;">📊 Scorecard</div><div style="font-weight:800;color:var(--navy);font-size:0.92rem;">' + scorecard.week + '</div><div style="font-size:0.78rem;color:var(--gray-text);margin-top:2px;">' + scorecard.offices.length + ' offices · Goals: AC10 ' + (scorecard.goals&&scorecard.goals.ac10||'—') + ' · DCR ' + (scorecard.goals&&scorecard.goals.allDCR||'—') + ' · NPS ' + (scorecard.goals&&scorecard.goals.allNPS||'—') + '</div></div>');
-    }
-    dss.style.gridTemplateColumns = 'repeat(auto-fit, minmax(220px, 1fr))';
-    dss.innerHTML = cards.join('');
+    var pills = [];
+    var pillStyle = function(color, label, detail) {
+      return '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:12px 16px;border-left:4px solid ' + color + ';display:flex;align-items:center;gap:10px;"><div><div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);font-weight:700;">' + label + '</div><div style="font-size:0.82rem;font-weight:700;color:var(--navy);margin-top:2px;">' + detail + '</div></div></div>';
+    };
+    if (data) pills.push(pillStyle('var(--green)', '📄 Transcript', (data.label||'Loaded') + ' · ' + (data.commitments||[]).length + ' commitments'));
+    if (capacity && capacity.totals) { var gc = capacity.totals.dishGap < 0 ? 'var(--red)' : 'var(--green)'; pills.push(pillStyle(gc, '📋 Book 20', 'DISH Gap: ' + capacity.totals.dishGap)); }
+    if (jiq) { var qc = jiq.quotaPct >= 90 ? 'var(--green)' : 'var(--red)'; pills.push(pillStyle(qc, '📦 JIQ', 'Quota: ' + (jiq.quotaPct||0).toFixed(1) + '%')); }
+    if (scorecard && scorecard.offices) pills.push(pillStyle('var(--blue-accent)', '📊 Scorecard', scorecard.offices.length + ' offices loaded'));
+    dss.innerHTML = pills.join('');
   }
 
-  // ── PRIORITY FLAGS: all sources combined ──
+  // ── SCOREBOARD PULSE — PER-LEADER CARDS (Action Items format) ──
   var pf = document.getElementById('dynPriorityFlags');
   if (pf) {
-    if (allFlags.length === 0) {
-      pf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No critical flags this week</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">All available data sources show no at-risk metrics, capacity gaps, or JIQ issues.</div></div></div>';
-    } else {
-      var flagHtml = '<div style="display:grid;gap:12px;">';
-      allFlags.forEach(function(f) {
-        var sourceBadge = '<span style="background:' + f.color + ';color:white;border-radius:5px;padding:2px 8px;font-size:0.7rem;font-weight:700;margin-left:8px;">' + f.source + '</span>';
-        flagHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 22px;border-left:5px solid ' + f.color + ';">' +
-          '<div style="font-weight:800;font-size:0.95rem;color:var(--navy);margin-bottom:6px;">' + f.icon + ' ' + f.title + sourceBadge + '</div>' +
-          '<div style="font-size:0.85rem;color:#374151;line-height:1.55;margin-bottom:8px;">' + f.detail + '</div>' +
-          '<div style="font-size:0.8rem;color:var(--gray-text);background:#f8fafc;border-radius:6px;padding:6px 10px;">\u27a1 ' + f.action + '</div>' +
-          '</div>';
+    var commits = data ? (data.commitments || []) : [];
+    var barriers = data ? (data.barriers || []) : [];
+    var metrics = data ? (data.metrics || []) : [];
+
+    // Group commitments by leader
+    var leaderMap = {};
+    commits.forEach(function(c) {
+      var l = c.leader || 'Team';
+      if (!leaderMap[l]) leaderMap[l] = { commitments: [], metrics: [], barriers: [] };
+      leaderMap[l].commitments.push(c.commitment);
+    });
+    // Attach metrics to leaders where name appears
+    metrics.forEach(function(m) {
+      KNOWN_LEADERS.forEach(function(ln) {
+        if (leaderMap[ln]) leaderMap[ln].metrics.push(m);
       });
-      flagHtml += '</div>';
-      pf.innerHTML = flagHtml;
+    });
+    // Attach barriers to leaders where name appears in barrier text
+    barriers.forEach(function(b) {
+      KNOWN_LEADERS.forEach(function(ln) {
+        if (b.toLowerCase().indexOf(ln.toLowerCase()) !== -1 && leaderMap[ln]) {
+          leaderMap[ln].barriers.push(b);
+        }
+      });
+    });
+
+    // Also add scorecard at-risk offices as leader entries
+    if (scorecard && scorecard.offices && scorecard.goals) {
+      var parseV = function(v){ return parseFloat(String(v||'').replace(/[%$,]/g,''))||null; };
+      scorecard.offices.forEach(function(o) {
+        var riskMetrics = [];
+        var goalAC10 = parseV(scorecard.goals.ac10);
+        var goalDCR = parseV(scorecard.goals.allDCR);
+        var goalNPS = parseV(scorecard.goals.allNPS);
+        var vAC10 = parseV(o.ac10); var vDCR = parseV(o.allDCR); var vNPS = parseV(o.allNPS);
+        if (goalAC10 && vAC10 !== null && vAC10 < goalAC10) riskMetrics.push('AC10: ' + vAC10 + '% (goal: ' + goalAC10 + '%)');
+        if (goalDCR && vDCR !== null && vDCR < goalDCR) riskMetrics.push('DCR: ' + vDCR + '% (goal: ' + goalDCR + '%)');
+        if (goalNPS && vNPS !== null && vNPS < goalNPS) riskMetrics.push('NPS: ' + vNPS + ' (goal: ' + goalNPS + ')');
+        if (riskMetrics.length > 0) {
+          var key = o.office;
+          if (!leaderMap[key]) leaderMap[key] = { commitments: [], metrics: [], barriers: [] };
+          riskMetrics.forEach(function(rm) { leaderMap[key].metrics.push({ metric: rm, status: 'At Risk' }); });
+        }
+      });
+    }
+
+    var leaderNames = Object.keys(leaderMap);
+
+    if (leaderNames.length === 0 && allFlags.length === 0) {
+      pf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:28px;border-left:4px solid var(--green);">' +
+        '<strong style="color:var(--green);">No at-risk leaders identified this week.</strong>' +
+        '<div style="font-size:0.88rem;color:var(--gray-text);margin-top:6px;">Upload a transcript with leader names and commitments to generate per-leader drill cards.</div></div>';
+    } else {
+      var pfHtml = '<div style="display:grid;gap:20px;">';
+
+      // If no leaders from transcript but have flags, show flag cards
+      if (leaderNames.length === 0) {
+        allFlags.forEach(function(f) {
+          pfHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:0;overflow:hidden;">' +
+            '<div style="background:var(--navy);padding:14px 20px;"><div style="font-weight:900;font-size:1.05rem;color:white;">' + f.title + '</div>' +
+            '<div style="font-size:0.8rem;color:rgba(255,255,255,0.7);margin-top:2px;">' + f.source + '</div></div>' +
+            '<div style="padding:18px 20px;">' +
+            '<div style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);margin-bottom:8px;">⏱ 45-Second Drill</div>' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.85rem;"><tbody>' +
+            '<tr><td style="padding:6px 0;color:var(--gray-text);font-weight:700;width:180px;">1. Metric at risk?</td><td style="padding:6px 0;color:#374151;">' + f.detail + '</td></tr>' +
+            '<tr><td style="padding:6px 0;color:var(--gray-text);font-weight:700;">2. Standard/action this week?</td><td style="padding:6px 0;color:#374151;">' + f.action + '</td></tr>' +
+            '<tr><td style="padding:6px 0;color:var(--gray-text);font-weight:700;">3. Help needed?</td><td style="padding:6px 0;color:#374151;">To be confirmed in meeting.</td></tr>' +
+            '</tbody></table></div></div>';
+        });
+      } else {
+        leaderNames.forEach(function(leader) {
+          var ld = leaderMap[leader];
+          var atRiskMetrics = ld.metrics.filter(function(m){ return m.status === 'At Risk'; });
+          var metricRisk = atRiskMetrics.length > 0 ? atRiskMetrics.map(function(m){ return m.metric + (m.value ? ': ' + m.value : ''); }).join(', ') : (ld.metrics.length > 0 ? ld.metrics.map(function(m){ return m.metric + (m.value ? ': ' + m.value : ''); }).join(', ') : 'No metrics at risk — maintaining standard.');
+          var actionText = ld.commitments.length > 0 ? ld.commitments[0].replace(/^by next tuesday[,:]?\s*/i,'').replace(/^i will\s*/i,'').replace(/^we will\s*/i,'') : 'Review current performance and confirm action for this week.';
+          var barrierText = ld.barriers.length > 0 ? ld.barriers[0].slice(0,120) : 'None identified.';
+
+          pfHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:0;overflow:hidden;">' +
+            // Leader header
+            '<div style="background:var(--navy);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;">' +
+            '<div style="font-weight:900;font-size:1.1rem;color:white;">' + leader + '</div>' +
+            '<span style="background:var(--gold);color:var(--navy);border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:800;">45-SEC DRILL</span>' +
+            '</div>' +
+            // 45-Second Drill
+            '<div style="padding:18px 20px;border-bottom:1px solid #f0f0f0;">' +
+            '<div style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--gray-text);margin-bottom:10px;">⏱ 45-Second Drill</div>' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.85rem;"><tbody>' +
+            '<tr style="border-bottom:1px solid #f8f8f8;"><td style="padding:7px 0;color:var(--gray-text);font-weight:700;width:200px;vertical-align:top;">1. Metric at risk?</td><td style="padding:7px 0;color:#374151;">' + metricRisk + '</td></tr>' +
+            '<tr style="border-bottom:1px solid #f8f8f8;"><td style="padding:7px 0;color:var(--gray-text);font-weight:700;vertical-align:top;">2. Standard/action this week?</td><td style="padding:7px 0;color:#374151;">' + actionText + '</td></tr>' +
+            '<tr><td style="padding:7px 0;color:var(--gray-text);font-weight:700;vertical-align:top;">3. Help needed?</td><td style="padding:7px 0;color:#374151;">' + (ld.barriers.length > 0 ? barrierText : 'None identified.') + '</td></tr>' +
+            '</tbody></table></div>' +
+            // Action Items & Deliverables table
+            '<div style="padding:18px 20px;background:#fafbfc;">' +
+            '<div style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--navy);margin-bottom:10px;">✅ Action Items &amp; Deliverables</div>' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;"><tbody>' +
+            '<tr style="border-bottom:1px solid #eee;"><td style="padding:7px 0;font-weight:700;color:var(--gray-text);width:160px;vertical-align:top;">Action This Week</td><td style="padding:7px 0;color:#374151;">' + actionText + '</td></tr>' +
+            '<tr style="border-bottom:1px solid #eee;"><td style="padding:7px 0;font-weight:700;color:var(--gray-text);vertical-align:top;">Metric / Standard</td><td style="padding:7px 0;color:#374151;">' + metricRisk + '</td></tr>' +
+            '<tr style="border-bottom:1px solid #eee;"><td style="padding:7px 0;font-weight:700;color:var(--gray-text);vertical-align:top;">Target by Tuesday</td><td style="padding:7px 0;color:#374151;">' + (ld.commitments.length > 0 ? ld.commitments[0].slice(0,120) : 'Confirm in meeting.') + '</td></tr>' +
+            '<tr style="border-bottom:1px solid #eee;"><td style="padding:7px 0;font-weight:700;color:var(--gray-text);">Owner</td><td style="padding:7px 0;font-weight:700;color:var(--navy);">' + leader + '</td></tr>' +
+            '<tr><td style="padding:7px 0;font-weight:700;color:var(--gray-text);vertical-align:top;">Support Needed</td><td style="padding:7px 0;color:#374151;">' + (ld.barriers.length > 0 ? ld.barriers[0].slice(0,100) : 'None identified.') + '</td></tr>' +
+            '</tbody></table></div>' +
+            '</div>';
+        });
+      }
+
+      pfHtml += '</div>';
+      pf.innerHTML = pfHtml;
     }
   }
 
-  // ── MEETING FLOW TIMELINE: data-driven time allocations ──
+  // ── AT-A-GLANCE SUMMARY TABLE ──
   var timeline = document.getElementById('dynAgendaTimeline');
   if (timeline) {
+    var allCommits = data ? (data.commitments || []) : [];
+    var glanceHtml = '<div style="margin-bottom:24px;">' +
+      '<div style="font-size:0.78rem;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--navy);margin-bottom:10px;">At-a-Glance: All Owners &amp; Deliverables</div>' +
+      '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;background:white;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;">' +
+      '<thead><tr style="background:var(--navy);color:white;">' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Owner</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Focus Area / Metric</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Key Action</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Due</th>' +
+      '</tr></thead><tbody>';
+    if (allCommits.length === 0) {
+      glanceHtml += '<tr><td colspan="4" style="padding:14px;color:var(--gray-text);">No commitments extracted from transcript. Upload a transcript with leader names and commitments.</td></tr>';
+    } else {
+      allCommits.forEach(function(c, i) {
+        var bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+        var actionClean = c.commitment.replace(/^by next tuesday[,:]?\s*/i,'').replace(/^i will\s*/i,'').replace(/^we will\s*/i,'');
+        glanceHtml += '<tr style="background:' + bg + ';border-bottom:1px solid #f0f0f0;">' +
+          '<td style="padding:9px 14px;font-weight:700;color:var(--navy);">' + (c.leader||'Team') + '</td>' +
+          '<td style="padding:9px 14px;color:#374151;">' + (c.metric || 'Commitment') + '</td>' +
+          '<td style="padding:9px 14px;color:#374151;">' + actionClean.slice(0,90) + (actionClean.length>90?'...':'') + '</td>' +
+          '<td style="padding:9px 14px;color:var(--navy);font-weight:700;">Tuesday</td>' +
+          '</tr>';
+      });
+    }
+    glanceHtml += '</tbody></table></div>';
+    timeline.innerHTML = glanceHtml;
+  }
+
+  // ── MEETING FLOW TIMELINE (hidden — replaced by at-a-glance) ──
+  var _timeline_unused = null;
+  if (_timeline_unused) {
     var criticalCount = allFlags.filter(function(f){ return f.severity === 'critical'; }).length;
     var hasCapGap = capacity && capacity.totals && capacity.totals.dishGap < 0;
     var hasJIQIssue = jiq && (jiq.quotaPct < 90 || jiq.grandTotal > 500);
@@ -3953,98 +4065,182 @@ function renderAgendaFromTranscript(ctx) {
     timeline.innerHTML = html;
   }
 
-  // ── COMMITMENTS: from transcript ──
+  // ── WEEKLY COMMITMENTS TABLE ──
   var cc = document.getElementById('dynCommitmentCheck');
   if (cc) {
-    var commits = data ? (data.commitments || []) : [];
-    if (commits.length === 0) {
-      cc.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No commitments were extracted from the transcript. Review the meeting notes manually and add commitments here.</div>';
+    var commits2 = data ? (data.commitments || []) : [];
+    var cHtml2 = '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;background:white;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;">' +
+      '<thead><tr style="background:var(--navy);color:white;">' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Leader</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Specific Action</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Measurement</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Support Needed</th>' +
+      '<th style="padding:10px 14px;text-align:left;font-weight:700;">Status</th>' +
+      '</tr></thead><tbody>';
+    if (commits2.length === 0) {
+      cHtml2 += '<tr><td colspan="5" style="padding:14px;color:var(--gray-text);">No commitments extracted. Upload a transcript with phrases like \'By next Tuesday\' or \'I will\'.</td></tr>';
     } else {
-      var cHtml = '<div style="display:grid;gap:10px;">';
-      commits.forEach(function(c) {
-        cHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:14px;">' +
-          '<div style="background:var(--navy);color:white;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:0.88rem;flex-shrink:0;">' + (c.leader||'?').slice(0,2).toUpperCase() + '</div>' +
-          '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + (c.leader||'Unknown') + '</div>' +
-          '<div style="font-size:0.85rem;color:#374151;margin-top:4px;line-height:1.5;">' + c.commitment + '</div>' +
-          '<div style="margin-top:8px;"><span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:3px 10px;font-size:0.75rem;font-weight:700;">⏳ Pending Review This Week</span></div>' +
-          '</div></div>';
+      commits2.forEach(function(c, i) {
+        var bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+        var actionClean = c.commitment.replace(/^by next tuesday[,:]?\s*/i,'').replace(/^i will\s*/i,'').replace(/^we will\s*/i,'');
+        cHtml2 += '<tr style="background:' + bg + ';border-bottom:1px solid #f0f0f0;">' +
+          '<td style="padding:9px 14px;font-weight:700;color:var(--navy);">' + (c.leader||'Team') + '</td>' +
+          '<td style="padding:9px 14px;color:#374151;">' + actionClean.slice(0,100) + (actionClean.length>100?'...':'') + '</td>' +
+          '<td style="padding:9px 14px;color:#374151;">Confirm in meeting</td>' +
+          '<td style="padding:9px 14px;color:#374151;">TBD</td>' +
+          '<td style="padding:9px 14px;"><span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:3px 8px;font-size:0.73rem;font-weight:700;">⏳ Pending</span></td>' +
+          '</tr>';
       });
-      cHtml += '</div>';
-      cc.innerHTML = cHtml;
     }
+    cHtml2 += '</tbody></table>';
+    cc.innerHTML = cHtml2;
   }
 
-  // ── DRILL ORDER: leaders from commitments + scorecard flags ──
+  // ── DRILL ORDER: numbered list with 45-sec format ──
   var drillDiv = document.getElementById('dynDrillOrder');
   if (drillDiv) {
-    var commitList = data ? (data.commitments || []) : [];
-    var drillNames = commitList.map(function(c){ return c.leader; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
-    // Also add leaders from scorecard offices below goal
+    var commitList3 = data ? (data.commitments || []) : [];
+    var drillNames3 = commitList3.map(function(c){ return c.leader; }).filter(function(v,i,a){ return a.indexOf(v)===i; });
     if (scorecard && scorecard.offices && scorecard.goals) {
-      var parseV2 = function(v){ return parseFloat(String(v||'').replace(/[%$,]/g,''))||null; };
-      var goalAC10 = parseV2(scorecard.goals.ac10);
+      var parseV3 = function(v){ return parseFloat(String(v||'').replace(/[%$,]/g,''))||null; };
+      var goalAC10b = parseV3(scorecard.goals.ac10);
       scorecard.offices.forEach(function(o) {
-        var v = parseV2(o.ac10);
-        if (goalAC10 && v !== null && v < goalAC10 * 0.97) {
-          if (drillNames.indexOf(o.office) === -1) drillNames.push(o.office + ' (AC10 below goal)');
+        var v = parseV3(o.ac10);
+        if (goalAC10b && v !== null && v < goalAC10b) {
+          if (drillNames3.indexOf(o.office) === -1) drillNames3.push(o.office);
         }
       });
     }
-    if (drillNames.length === 0 && allFlags.length === 0) {
-      drillDiv.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;border-left:4px solid var(--green);display:flex;align-items:center;gap:14px;"><span style="font-size:1.6rem;">✅</span><div><strong style="color:var(--green);">No drills required this week</strong><div style="font-size:0.88rem;color:var(--gray-text);margin-top:4px;">No at-risk leaders or metrics identified across all data sources.</div></div></div>';
+    if (drillNames3.length === 0) {
+      drillDiv.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;border-left:4px solid var(--green);"><strong style="color:var(--green);">No drills required this week.</strong> All metrics on track.</div>';
     } else {
-      var dHtml = '<div style="display:grid;gap:10px;">';
-      drillNames.forEach(function(leader, i) {
-        var leaderCommits = commitList.filter(function(c){ return c.leader === leader; });
-        dHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;display:flex;align-items:flex-start;gap:14px;">' +
-          '<div style="background:var(--red);color:white;border-radius:8px;padding:6px 12px;font-size:0.88rem;font-weight:800;white-space:nowrap;">#' + (i+1) + '</div>' +
-          '<div style="flex:1;"><div style="font-weight:800;color:var(--navy);">' + leader + '</div>' +
-          (leaderCommits.length > 0 ? '<div style="font-size:0.83rem;color:#374151;margin-top:4px;">' + leaderCommits.map(function(c){ return c.commitment.slice(0,100)+(c.commitment.length>100?'...':''); }).join(' | ') + '</div>' : '') +
-          '<div style="margin-top:8px;font-size:0.78rem;color:var(--gray-text);background:#f8fafc;border-radius:6px;padding:5px 10px;">45 seconds: metric → root cause → action → measurement</div>' +
-          '</div></div>';
+      var dHtml3 = '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;background:white;border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;">' +
+        '<thead><tr style="background:var(--navy);color:white;">' +
+        '<th style="padding:10px 14px;text-align:left;font-weight:700;width:40px;">#</th>' +
+        '<th style="padding:10px 14px;text-align:left;font-weight:700;">Leader</th>' +
+        '<th style="padding:10px 14px;text-align:left;font-weight:700;">Metric at Risk</th>' +
+        '<th style="padding:10px 14px;text-align:left;font-weight:700;">Drill Format</th>' +
+        '</tr></thead><tbody>';
+      drillNames3.forEach(function(leader, i) {
+        var lc = commitList3.filter(function(c){ return c.leader === leader; });
+        var metricNote = lc.length > 0 ? lc[0].commitment.slice(0,80) : 'Review at-risk metric in meeting';
+        var bg = i % 2 === 0 ? '#ffffff' : '#f8fafc';
+        dHtml3 += '<tr style="background:' + bg + ';border-bottom:1px solid #f0f0f0;">' +
+          '<td style="padding:9px 14px;font-weight:900;color:var(--red);">' + (i+1) + '</td>' +
+          '<td style="padding:9px 14px;font-weight:700;color:var(--navy);">' + leader + '</td>' +
+          '<td style="padding:9px 14px;color:#374151;">' + metricNote.slice(0,80) + '</td>' +
+          '<td style="padding:9px 14px;color:var(--gray-text);font-size:0.8rem;">Metric → Root Cause → Action → Measurement</td>' +
+          '</tr>';
       });
-      dHtml += '</div>';
-      drillDiv.innerHTML = dHtml;
+      dHtml3 += '</tbody></table>';
+      drillDiv.innerHTML = dHtml3;
     }
   }
 
-  // ── BARRIER FOCUS: capacity + JIQ + transcript barriers ──
+  // ── BARRIER BUSTERS: DROOM format ──
   var bf = document.getElementById('dynBarrierFocus');
   if (bf) {
-    var barrierItems = [];
-    // Capacity barriers
+    var barrierItems2 = [];
     if (capacity && capacity.totals && capacity.totals.dishGap < 0) {
-      barrierItems.push({ icon: '📋', label: 'Book 20 Capacity Gap', text: 'DISH gap: ' + capacity.totals.dishGap + ' (' + capacity.totals.routable + ' routable vs ' + capacity.totals.dishRPM + ' target). Pipeline: ' + capacity.totals.totalPipeline + '. Onboarding: ' + capacity.totals.onboard + '.', color: 'var(--red)' });
+      barrierItems2.push({ label: 'Capacity Gap — DISH Shortfall', define: 'DISH gap of ' + capacity.totals.dishGap + '. Routable: ' + capacity.totals.routable + ' vs target: ' + capacity.totals.dishRPM + '.', rootCause: 'Insufficient routable technicians. Pipeline: ' + capacity.totals.totalPipeline + '. Onboarding: ' + capacity.totals.onboard + '.', decision: 'Identify offices with highest gap. Accelerate onboarding pipeline.', owner: 'Capacity Team', measure: 'DISH gap closes to 0 or positive by next Tuesday.', color: 'var(--red)' });
     }
-    // JIQ barriers
     if (jiq && jiq.grandTotal > 500) {
-      barrierItems.push({ icon: '📦', label: 'JIQ Backlog: ' + jiq.grandTotal.toLocaleString() + ' Jobs', text: 'Quota consumption: ' + (jiq.quotaPct||0).toFixed(1) + '%. TC share: ' + (jiq.tc||0).toFixed(1) + '%. Starlink: ' + (jiq.starlink||0).toFixed(1) + '%. ' + (jiq.regions&&jiq.regions.length>0 ? 'Highest regions: ' + jiq.regions.sort(function(a,b){return b.total-a.total;}).slice(0,3).map(function(r){return r.car+' ('+r.total+')';}).join(', ') : ''), color: 'var(--yellow)' });
+      barrierItems2.push({ label: 'JIQ Backlog — ' + jiq.grandTotal.toLocaleString() + ' Jobs', define: 'Total JIQ at ' + jiq.grandTotal.toLocaleString() + '. Quota: ' + (jiq.quotaPct||0).toFixed(1) + '%.', rootCause: 'Capacity constraints limiting job completion rate.', decision: 'Prioritize highest-backlog regions. Confirm routing plan.', owner: 'Operations', measure: 'JIQ reduces by 10% week over week.', color: 'var(--yellow)' });
     }
-    // Transcript barriers
-    if (data && data.barriers) {
-      data.barriers.slice(0,3).forEach(function(b, i) {
-        barrierItems.push({ icon: '🎤', label: 'From Last Meeting', text: b, color: 'var(--blue-accent)' });
+    if (data && data.barriers && data.barriers.length > 0) {
+      data.barriers.slice(0,3).forEach(function(b) {
+        barrierItems2.push({ label: 'From Last Meeting', define: b.slice(0,120), rootCause: 'To be determined in meeting.', decision: 'Assign owner and action in meeting.', owner: 'TBD', measure: 'Resolved by next Tuesday.', color: 'var(--blue-accent)' });
       });
     }
-    if (barrierItems.length === 0) {
-      bf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:22px;color:var(--gray-text);">No barriers identified across data sources. Use this time to address any emerging blockers raised live in the meeting.</div>';
+    if (barrierItems2.length === 0) {
+      bf.innerHTML = '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;color:var(--gray-text);">No barriers identified. Use this segment to address live blockers raised in the meeting.</div>';
     } else {
-      var bHtml = '<div style="display:grid;gap:10px;">';
-      barrierItems.forEach(function(b, i) {
-        bHtml += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px;border-left:5px solid ' + b.color + ';">' +
-          '<div style="font-weight:800;color:var(--navy);margin-bottom:6px;">' + b.icon + ' ' + b.label + '</div>' +
-          '<div style="font-size:0.85rem;color:#374151;line-height:1.55;">' + b.text + '</div>' +
-          '<div style="margin-top:10px;font-size:0.78rem;color:var(--gray-text);background:#f8fafc;border-radius:6px;padding:5px 10px;">DROOM: Define → Root Cause → Decision → Owner → Measure</div>' +
-          '</div>';
+      var bHtml2 = '<div style="display:grid;gap:16px;">';
+      barrierItems2.forEach(function(b) {
+        bHtml2 += '<div style="background:white;border-radius:var(--radius);box-shadow:var(--shadow);padding:0;overflow:hidden;">' +
+          '<div style="background:' + b.color + ';padding:12px 18px;"><strong style="color:white;font-size:0.95rem;">' + b.label + '</strong></div>' +
+          '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;"><tbody>' +
+          '<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:9px 18px;font-weight:700;color:var(--gray-text);width:140px;">Define</td><td style="padding:9px 18px;color:#374151;">' + b.define + '</td></tr>' +
+          '<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:9px 18px;font-weight:700;color:var(--gray-text);">Root Cause</td><td style="padding:9px 18px;color:#374151;">' + b.rootCause + '</td></tr>' +
+          '<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:9px 18px;font-weight:700;color:var(--gray-text);">Decision</td><td style="padding:9px 18px;color:#374151;">' + b.decision + '</td></tr>' +
+          '<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:9px 18px;font-weight:700;color:var(--navy);">Owner</td><td style="padding:9px 18px;font-weight:700;color:var(--navy);">' + b.owner + '</td></tr>' +
+          '<tr><td style="padding:9px 18px;font-weight:700;color:var(--gray-text);">Measure</td><td style="padding:9px 18px;color:#374151;">' + b.measure + '</td></tr>' +
+          '</tbody></table></div>';
       });
-      bHtml += '</div>';
-      bf.innerHTML = bHtml;
+      bHtml2 += '</div>';
+      bf.innerHTML = bHtml2;
     }
   }
 
-  // ── SCROLL to agenda ──
+  // ── PDF EXPORT BUTTON + CLOSING LINE ──
   var meetingCard = document.getElementById('dynMeetingCard');
-  if (meetingCard) { setTimeout(function(){ meetingCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 200); }
+  if (meetingCard) {
+    // Add export button if not already present
+    if (!document.getElementById('exportAgendaPDF')) {
+      var exportBar = document.createElement('div');
+      exportBar.style.cssText = 'margin-top:28px;padding:18px 0;border-top:2px solid var(--navy);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;';
+      exportBar.innerHTML = '<div style="font-size:0.88rem;font-style:italic;color:var(--navy);font-weight:700;">The LinkUs Standard — Ownership is assumed. The standard doesn\'t protect itself.</div>' +
+        '<button id="exportAgendaPDF" onclick="exportAgendaToPDF()" style="background:var(--navy);color:white;border:none;border-radius:8px;padding:10px 22px;font-size:0.88rem;font-weight:800;cursor:pointer;display:flex;align-items:center;gap:8px;">📄 Export to PDF</button>';
+      var agendaContainer = document.getElementById('tab-dynamic');
+      if (agendaContainer) agendaContainer.appendChild(exportBar);
+    }
+    setTimeout(function(){ meetingCard.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 200);
+  }
+}
+
+function exportAgendaToPDF() {
+  // Build a clean print-friendly version of the agenda
+  var dynTab = document.getElementById('tab-dynamic');
+  if (!dynTab) { alert('No agenda to export. Build the agenda first.'); return; }
+
+  var titleEl = document.getElementById('dynMeetingTitle');
+  var metaEl = document.getElementById('dynMeetingMeta');
+  var title = titleEl ? titleEl.textContent : 'The LinkUs Standard';
+  var meta = metaEl ? metaEl.textContent : '';
+
+  // Collect all rendered section content
+  var sections = [
+    { id: 'dynDataStatus', label: 'Data Sources' },
+    { id: 'dynAgendaTimeline', label: 'At-a-Glance: All Owners & Deliverables' },
+    { id: 'dynPriorityFlags', label: 'Scoreboard Pulse — Per-Leader Drill Cards' },
+    { id: 'dynCommitmentCheck', label: 'Weekly Commitments' },
+    { id: 'dynDrillOrder', label: '45-Second Drill Order' },
+    { id: 'dynBarrierFocus', label: 'Barrier Busters (DROOM)' }
+  ];
+
+  var printWin = window.open('', '_blank', 'width=900,height=700');
+  var html = '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>' + title + '</title>' +
+    '<style>' +
+    'body{font-family:Arial,sans-serif;color:#1a1a2e;margin:0;padding:24px;font-size:13px;}' +
+    'h1{font-size:20px;font-weight:900;color:#1a1a2e;margin:0 0 4px;}' +
+    '.meta{font-size:11px;color:#666;margin-bottom:20px;}' +
+    'h2{font-size:13px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:#1a1a2e;border-bottom:2px solid #1a1a2e;padding-bottom:4px;margin:20px 0 10px;}' +
+    'table{width:100%;border-collapse:collapse;margin-bottom:12px;}' +
+    'th{background:#1a1a2e;color:white;padding:7px 10px;text-align:left;font-size:11px;}' +
+    'td{padding:7px 10px;border-bottom:1px solid #eee;font-size:12px;vertical-align:top;}' +
+    'tr:nth-child(even) td{background:#f8fafc;}' +
+    '.card{border:1px solid #ddd;border-radius:6px;margin-bottom:12px;overflow:hidden;}' +
+    '.card-header{background:#1a1a2e;color:white;padding:8px 12px;font-weight:800;font-size:12px;}' +
+    '.card-body{padding:10px 12px;}' +
+    '.closing{margin-top:28px;padding-top:14px;border-top:2px solid #1a1a2e;font-style:italic;font-weight:700;font-size:12px;color:#1a1a2e;}' +
+    '@media print{body{padding:12px;}h2{page-break-before:auto;}}' +
+    '</style></head><body>' +
+    '<h1>' + title + '</h1>' +
+    '<div class="meta">' + meta + '</div>';
+
+  sections.forEach(function(s) {
+    var el = document.getElementById(s.id);
+    if (el && el.innerHTML.trim() && el.innerHTML.indexOf('Upload') === -1) {
+      html += '<h2>' + s.label + '</h2>' + el.innerHTML;
+    }
+  });
+
+  html += '<div class="closing">The LinkUs Standard &mdash; Ownership is assumed. The standard doesn\'t protect itself.</div>';
+  html += '</body></html>';
+
+  printWin.document.write(html);
+  printWin.document.close();
+  setTimeout(function(){ printWin.print(); }, 600);
 }
 
 function processTranscriptPaste() {
