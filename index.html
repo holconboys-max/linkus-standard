@@ -1442,7 +1442,14 @@
 </main>
 
 <script>
-// ── DATA ──────────────────────────────────────────────────────────────────
+// ── GLOBAL VARS (declared first to avoid TDZ issues) ──
+var KNOWN_LEADERS = ['Boelens','Baver','Altermatt','Escott','Barker','Otteson','Manning','Anderson','McPike','Matt Baver','Jeff Altermatt','Garrett Barker','Justin Otteson','Jeremy Manning','Stephen Anderson','Luke McPike','Morris','Betts','Nicholas','Roman'];
+var KNOWN_METRICS = ['AC10','DCR','NPS','SHS','ArcFlip','Days Booked','Starlink','BD DCR','$/WO'];
+var currentTranscriptData = null;
+var dynTranscriptText = null;
+var dynTranscriptLabelVal = null;
+
+// ── DATA ─────────────────────────────────────────────────────────────────────────────
 const segments = [
   {
     num: "01", icon: "🎯", name: "Open + Purpose", time: "2 min", owner: "Dant Morris",
@@ -3490,13 +3497,6 @@ function downloadScorecardTemplate() {
 // ════════════════════════════════════════════════════════════════════════════════
 
 // Known LinkUs leaders for name matching
-const KNOWN_LEADERS = ['Boelens','Baver','Altermatt','Escott','Barker','Otteson','Manning','Anderson','McPike','Matt Baver','Jeff Altermatt','Garrett Barker','Justin Otteson','Jeremy Manning','Stephen Anderson','Luke McPike','Morris','Betts','Nicholas','Roman'];
-const KNOWN_METRICS = ['AC10','DCR','NPS','SHS','ArcFlip','Days Booked','Starlink','BD DCR','$/WO'];
-
-var currentTranscriptData = null;
-var dynTranscriptText = null;
-var dynTranscriptLabelVal = null;
-
 function handleTranscriptUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
